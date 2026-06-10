@@ -32,6 +32,20 @@ temp
 *.tmp
 *.temp
 
+# Archives and large binary artifacts
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bak
+*.iso
+*.dmg
+*.msi
+*.exe
+
 # Local tool/session metadata
 .trae
 

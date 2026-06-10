@@ -97,21 +97,35 @@ function calculateGridLoad(equipment: Equipment[]): number {
   return equipment.reduce((sum, e) => sum + e.currentLoad, 0)
 }
 
-function hasEnoughPower(
-  equip: Equipment,
-  energySystem: EnergySystem,
-  equipment: Equipment[]
+const MAX_POWER_SLOTS_ON_BLACKOUT = 3
+
+function canEquipmentRunByPriority(
+  targetEquipId: string,
+  equipment: Equipment[],
+  energySystem: EnergySystem
 ): boolean {
+  const targetEquip = equipment.find(e => e.id === targetEquipId)
+  if (!targetEquip || targetEquip.status !== 'normal') return false
+
+  const priority = energySystem.powerPriority
+  const normalEquipIds = equipment.filter(e => e.status === 'normal').map(e => e.id)
+
   if (energySystem.gridStatus === 'online' && energySystem.powerSource !== 'battery') {
-    const currentLoad = calculateGridLoad(
-      equipment.filter(e => e.id !== equip.id)
-    )
-    return currentLoad + equip.powerConsumption <= energySystem.totalGridCapacity
+    return targetEquip.powerConsumption <= energySystem.totalGridCapacity
   }
 
-  if (energySystem.powerSource !== 'grid') {
-    if (equip.batteryLevel >= equip.powerConsumption) return true
-    if (energySystem.currentBackupBattery >= equip.powerConsumption) return true
+  let activeCount = 0
+  for (const equipId of priority) {
+    if (!normalEquipIds.includes(equipId)) continue
+
+    if (equipId === targetEquipId) {
+      if (energySystem.gridStatus === 'offline' && activeCount >= MAX_POWER_SLOTS_ON_BLACKOUT) {
+        return false
+      }
+      return targetEquip.batteryLevel >= targetEquip.powerConsumption ||
+        energySystem.currentBackupBattery >= targetEquip.powerConsumption
+    }
+    activeCount++
   }
 
   return false
@@ -139,9 +153,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   canEquipmentRun: (equipmentId: string) => {
     const state = get()
-    const equip = state.equipment.find(e => e.id === equipmentId)
-    if (!equip || equip.status !== 'normal') return false
-    return hasEnoughPower(equip, state.energySystem, state.equipment)
+    return canEquipmentRunByPriority(equipmentId, state.equipment, state.energySystem)
   },
 
   selectCase: (id: string) => {
