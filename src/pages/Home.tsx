@@ -3,21 +3,24 @@ import SymptomCard from '@/components/SymptomCard'
 import TreatmentPanel from '@/components/TreatmentPanel'
 import AccidentOverlay from '@/components/AccidentOverlay'
 import EquipmentPanel from '@/components/EquipmentPanel'
+import EnergyPanel from '@/components/EnergyPanel'
 import PlayerProgress from '@/components/PlayerProgress'
 import DiagnosisResult from '@/components/DiagnosisResult'
 import { useGameStore } from '@/store/useGameStore'
 import { getBreed } from '@/data/gameData'
-import { Cross, Zap, FlaskConical } from 'lucide-react'
+import { Cross, Zap, FlaskConical, ZapOff } from 'lucide-react'
 
 export default function Home() {
   const activeCaseId = useGameStore(s => s.activeCaseId)
   const cases = useGameStore(s => s.cases)
+  const energySystem = useGameStore(s => s.energySystem)
   const generateNewCase = useGameStore(s => s.generateNewCase)
   const loadTestCases = useGameStore(s => s.loadTestCases)
   const resetGame = useGameStore(s => s.resetGame)
 
   const activeCase = cases.find(c => c.id === activeCaseId)
   const breed = activeCase ? getBreed(activeCase.breedId) : null
+  const isBlackout = energySystem.gridStatus === 'offline'
 
   return (
     <div className="h-screen w-screen bg-deep-space text-gray-100 overflow-hidden flex flex-col">
@@ -34,10 +37,16 @@ export default function Home() {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs text-gray-500">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <span>在线</span>
+          <div className={`flex items-center gap-1.5 text-xs ${isBlackout ? 'text-red-500' : 'text-gray-500'}`}>
+            <span className={`w-2 h-2 rounded-full ${isBlackout ? 'bg-red-500 animate-pulse' : 'bg-green-500 animate-pulse'}`} />
+            <span>{isBlackout ? '断电中' : '在线'}</span>
           </div>
+          {isBlackout && (
+            <div className="flex items-center gap-1 text-xs text-red-400 bg-red-900/30 px-2 py-1 rounded animate-pulse">
+              <ZapOff className="w-3 h-3" />
+              <span>备用电源运行中</span>
+            </div>
+          )}
           <button
             onClick={loadTestCases}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-900/30 border border-purple-700/30 text-purple-400 text-xs hover:bg-purple-900/50 transition-colors"
@@ -108,8 +117,11 @@ export default function Home() {
           </div>
         </main>
 
-        <aside className="w-56 flex-shrink-0 border-l border-cyan-900/30 bg-gray-950/40 p-4 space-y-4 overflow-y-auto">
+        <aside className="w-64 flex-shrink-0 border-l border-cyan-900/30 bg-gray-950/40 p-4 space-y-4 overflow-y-auto">
           <PlayerProgress />
+          <div className="border-t border-gray-800/50 pt-4">
+            <EnergyPanel />
+          </div>
           <div className="border-t border-gray-800/50 pt-4">
             <EquipmentPanel />
           </div>

@@ -2,7 +2,7 @@ import { useGameStore } from '@/store/useGameStore'
 import { getBreed, medicines } from '@/data/gameData'
 import type { ActionType } from '@/data/gameData'
 import {
-  Search, Pill, Syringe, UtensilsCrossed, ShieldAlert, X
+  Search, Pill, Syringe, UtensilsCrossed, ShieldAlert, X, ZapOff
 } from 'lucide-react'
 
 const actions: { type: ActionType; label: string; icon: typeof Search; color: string; bgColor: string }[] = [
@@ -20,6 +20,7 @@ export default function TreatmentPanel() {
   const gamePhase = useGameStore(s => s.gamePhase)
   const showMedicineSelector = useGameStore(s => s.showMedicineSelector)
   const pendingAction = useGameStore(s => s.pendingAction)
+  const energySystem = useGameStore(s => s.energySystem)
   const loadTestCases = useGameStore(s => s.loadTestCases)
   const examine = useGameStore(s => s.examine)
   const medicate = useGameStore(s => s.medicate)
@@ -28,6 +29,7 @@ export default function TreatmentPanel() {
   const isolate = useGameStore(s => s.isolate)
   const selectMedicine = useGameStore(s => s.selectMedicine)
   const cancelMedicineSelect = useGameStore(s => s.cancelMedicineSelect)
+  const canEquipmentRun = useGameStore(s => s.canEquipmentRun)
 
   const selectorTitle = pendingAction === 'feed' ? '选择食物' : pendingAction === 'inject' ? '选择注射剂' : '选择药品'
 
@@ -37,11 +39,21 @@ export default function TreatmentPanel() {
   if (!activeCase || !breed) return null
 
   const isDisabled = gamePhase === 'accident' || gamePhase === 'result'
+  const isBlackout = energySystem.gridStatus === 'offline'
 
   function isActionAvailable(type: ActionType): boolean {
     if (isDisabled) return false
     const equip = equipment.find(e => e.requiredAction === type)
-    return equip?.status === 'normal'
+    if (!equip || equip.status !== 'normal') return false
+    return canEquipmentRun(equip.id)
+  }
+
+  function getDisableReason(type: ActionType): string | null {
+    if (isDisabled) return null
+    const equip = equipment.find(e => e.requiredAction === type)
+    if (!equip || equip.status !== 'normal') return '设备损坏'
+    if (!canEquipmentRun(equip.id)) return isBlackout ? '断电缺电' : '电量不足'
+    return null
   }
 
   function handleAction(type: ActionType) {
@@ -60,23 +72,41 @@ export default function TreatmentPanel() {
         <h3 className="font-display text-xs tracking-widest text-gray-400 uppercase">
           诊疗操作
         </h3>
-        {activeCase.examined && (
-          <span className="text-[10px] text-cyan-500 bg-cyan-900/30 px-2 py-0.5 rounded-full">
-            ✓ 已检查
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {isBlackout && (
+            <span className="flex items-center gap-1 text-[10px] text-red-400 bg-red-900/30 px-2 py-0.5 rounded-full animate-pulse">
+              <ZapOff className="w-2.5 h-2.5" />
+              电网离线
+            </span>
+          )}
+          {activeCase.examined && (
+            <span className="text-[10px] text-cyan-500 bg-cyan-900/30 px-2 py-0.5 rounded-full">
+              ✓ 已检查
+            </span>
+          )}
+        </div>
       </div>
+
+      {isBlackout && (
+        <div className="bg-red-900/20 border border-red-800/40 rounded-lg p-2 text-center">
+          <span className="text-[11px] text-red-400">
+            ⚠️ 正在使用备用电源，诊疗可能出现偏差！
+          </span>
+        </div>
+      )}
 
       <div className="grid grid-cols-5 gap-2">
         {actions.map(({ type, label, icon: Icon, color, bgColor }) => {
           const available = isActionAvailable(type)
           const equip = equipment.find(e => e.requiredAction === type)
+          const disableReason = getDisableReason(type)
 
           return (
             <button
               key={type}
               onClick={() => handleAction(type)}
               disabled={!available}
+              title={disableReason || ''}
               className={`
                 relative flex flex-col items-center gap-1.5 p-3 rounded-xl transition-all duration-200
                 bg-gradient-to-b ${bgColor}
@@ -91,6 +121,11 @@ export default function TreatmentPanel() {
               </span>
               {equip?.status === 'damaged' && (
                 <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+              )}
+              {disableReason && equip?.status !== 'damaged' && (
+                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[8px] text-yellow-500 whitespace-nowrap">
+                  {disableReason}
+                </span>
               )}
             </button>
           )

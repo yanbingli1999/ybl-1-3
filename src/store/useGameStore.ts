@@ -7,7 +7,10 @@ import {
   type DiagnosisResult,
   type ActionType,
   type AccidentType,
+  type EnergySystem,
+  type PowerSource,
   initialEquipment,
+  initialEnergySystem,
   generatePetCase,
   generateInitialCases,
   generateTestCases,
@@ -20,6 +23,7 @@ interface GameState {
   activeCaseId: string | null
   player: Player
   equipment: Equipment[]
+  energySystem: EnergySystem
   gamePhase: GamePhase
   accidentType: AccidentType | null
   diagnosisResult: DiagnosisResult | null
@@ -43,6 +47,13 @@ interface GameState {
   generateNewCase: () => void
   loadTestCases: () => void
   resetGame: () => void
+
+  toggleBlackout: () => void
+  restorePower: () => void
+  setPowerSource: (source: PowerSource) => void
+  adjustPowerPriority: (equipmentId: string, direction: 'up' | 'down') => void
+  chargeBatteries: () => void
+  canEquipmentRun: (equipmentId: string) => boolean
 }
 
 const initialPlayer: Player = {
@@ -82,11 +93,36 @@ function getActionLabel(action: ActionType): string {
   }
 }
 
+function calculateGridLoad(equipment: Equipment[]): number {
+  return equipment.reduce((sum, e) => sum + e.currentLoad, 0)
+}
+
+function hasEnoughPower(
+  equip: Equipment,
+  energySystem: EnergySystem,
+  equipment: Equipment[]
+): boolean {
+  if (energySystem.gridStatus === 'online' && energySystem.powerSource !== 'battery') {
+    const currentLoad = calculateGridLoad(
+      equipment.filter(e => e.id !== equip.id)
+    )
+    return currentLoad + equip.powerConsumption <= energySystem.totalGridCapacity
+  }
+
+  if (energySystem.powerSource !== 'grid') {
+    if (equip.batteryLevel >= equip.powerConsumption) return true
+    if (energySystem.currentBackupBattery >= equip.powerConsumption) return true
+  }
+
+  return false
+}
+
 export const useGameStore = create<GameState>((set, get) => ({
   cases: generateInitialCases(5),
   activeCaseId: null,
   player: { ...initialPlayer },
   equipment: initialEquipment.map(e => ({ ...e })),
+  energySystem: { ...initialEnergySystem },
   gamePhase: 'idle',
   accidentType: null,
   diagnosisResult: null,
@@ -100,6 +136,13 @@ export const useGameStore = create<GameState>((set, get) => ({
   selectedMedicineId: null,
   showMedicineSelector: false,
   pendingAction: null,
+
+  canEquipmentRun: (equipmentId: string) => {
+    const state = get()
+    const equip = state.equipment.find(e => e.id === equipmentId)
+    if (!equip || equip.status !== 'normal') return false
+    return hasEnoughPower(equip, state.energySystem, state.equipment)
+  },
 
   selectCase: (id: string) => {
     const state = get()
@@ -122,12 +165,70 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (scanner?.status !== 'normal') return
     if (state.actionCooldowns.examine > Date.now()) return
 
+    const isBlackout = state.energySystem.gridStatus === 'offline'
+    const hasPower = get().canEquipmentRun(scanner.id)
+    if (!hasPower) return
+
+    let updatedEquipment = [...state.equipment]
+    let updatedEnergy = { ...state.energySystem }
+
+    if (isBlackout) {
+      if (scanner.batteryLevel >= scanner.powerConsumption) {
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === scanner.id
+            ? { ...e, batteryLevel: e.batteryLevel - scanner.powerConsumption, currentLoad: scanner.powerConsumption }
+            : e
+        )
+      } else if (updatedEnergy.currentBackupBattery >= scanner.powerConsumption) {
+        updatedEnergy.currentBackupBattery -= scanner.powerConsumption
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === scanner.id ? { ...e, currentLoad: scanner.powerConsumption } : e
+        )
+      }
+    } else if (updatedEnergy.powerSource === 'battery') {
+      if (scanner.batteryLevel >= scanner.powerConsumption) {
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === scanner.id
+            ? { ...e, batteryLevel: e.batteryLevel - scanner.powerConsumption, currentLoad: scanner.powerConsumption }
+            : e
+        )
+      } else {
+        return
+      }
+    } else {
+      updatedEquipment = updatedEquipment.map(e =>
+        e.id === scanner.id ? { ...e, currentLoad: scanner.powerConsumption } : e
+      )
+      if (updatedEnergy.powerSource === 'hybrid' && scanner.batteryLevel < scanner.batteryCapacity) {
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === scanner.id
+            ? { ...e, batteryLevel: Math.min(e.batteryCapacity, e.batteryLevel + 2) }
+            : e
+        )
+      }
+    }
+
+    updatedEnergy.currentGridLoad = calculateGridLoad(updatedEquipment)
+
+    const isOverloaded = updatedEquipment.some(
+      e => e.currentLoad > e.overloadThreshold
+    )
+
     const updatedCases = state.cases.map(c =>
       c.id === activeCase.id ? { ...c, examined: true } : c
     )
 
+    setTimeout(() => {
+      set(state => ({
+        equipment: state.equipment.map(e => ({ ...e, currentLoad: 0 })),
+        energySystem: { ...state.energySystem, currentGridLoad: 0 },
+      }))
+    }, 2000)
+
     set({
       cases: updatedCases,
+      equipment: updatedEquipment,
+      energySystem: updatedEnergy,
       actionCooldowns: { ...state.actionCooldowns, examine: Date.now() + 3000 },
     })
   },
@@ -203,6 +304,62 @@ export const useGameStore = create<GameState>((set, get) => ({
     const requiredEquip = state.equipment.find(e => e.requiredAction === action)
     if (requiredEquip?.status !== 'normal') return
 
+    const isBlackout = state.energySystem.gridStatus === 'offline'
+    const hasPower = get().canEquipmentRun(requiredEquip.id)
+    if (!hasPower) return
+
+    let updatedEquipment = [...state.equipment]
+    let updatedEnergy = { ...state.energySystem }
+
+    if (isBlackout) {
+      if (requiredEquip.batteryLevel >= requiredEquip.powerConsumption) {
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === requiredEquip.id
+            ? { ...e, batteryLevel: e.batteryLevel - requiredEquip.powerConsumption, currentLoad: requiredEquip.powerConsumption }
+            : e
+        )
+      } else if (updatedEnergy.currentBackupBattery >= requiredEquip.powerConsumption) {
+        updatedEnergy.currentBackupBattery -= requiredEquip.powerConsumption
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === requiredEquip.id ? { ...e, currentLoad: requiredEquip.powerConsumption } : e
+        )
+      }
+    } else if (updatedEnergy.powerSource === 'battery') {
+      if (requiredEquip.batteryLevel >= requiredEquip.powerConsumption) {
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === requiredEquip.id
+            ? { ...e, batteryLevel: e.batteryLevel - requiredEquip.powerConsumption, currentLoad: requiredEquip.powerConsumption }
+            : e
+        )
+      } else {
+        return
+      }
+    } else {
+      updatedEquipment = updatedEquipment.map(e =>
+        e.id === requiredEquip.id ? { ...e, currentLoad: requiredEquip.powerConsumption } : e
+      )
+      if (updatedEnergy.powerSource === 'hybrid' && requiredEquip.batteryLevel < requiredEquip.batteryCapacity) {
+        updatedEquipment = updatedEquipment.map(e =>
+          e.id === requiredEquip.id
+            ? { ...e, batteryLevel: Math.min(e.batteryCapacity, e.batteryLevel + 3) }
+            : e
+        )
+      }
+    }
+
+    updatedEnergy.currentGridLoad = calculateGridLoad(updatedEquipment)
+
+    const isOverloaded = updatedEquipment.some(
+      e => e.currentLoad > e.overloadThreshold
+    )
+
+    setTimeout(() => {
+      set(state => ({
+        equipment: state.equipment.map(e => ({ ...e, currentLoad: 0 })),
+        energySystem: { ...state.energySystem, currentGridLoad: 0 },
+      }))
+    }, 2000)
+
     const actionCorrect = action === disease.correctAction
     const needsMedicine = disease.medicineId !== null
     const medicine = medicineId ? getMedicine(medicineId) : null
@@ -213,7 +370,9 @@ export const useGameStore = create<GameState>((set, get) => ({
     if (!actionCorrect) errorType = 'action'
     else if (actionCorrect && !medicineCorrect) errorType = 'medicine'
 
-    const isCorrect = actionCorrect && medicineCorrect
+    const blackoutForcedMisdiagnosis = isBlackout && Math.random() < 0.4
+
+    const isCorrect = actionCorrect && medicineCorrect && !blackoutForcedMisdiagnosis
 
     if (isCorrect) {
       const coinsEarned = getCoinsForUrgency(activeCase.urgency)
@@ -249,8 +408,15 @@ export const useGameStore = create<GameState>((set, get) => ({
         errorType: null,
       }
 
+      if (blackoutForcedMisdiagnosis) {
+        updatedEnergy.misdiagnosedDuringBlackout += 1
+        message += ' ⚠️ 【断电干扰】备用电源不稳定导致数据偏差！'
+      }
+
       set({
         cases: updatedCases,
+        equipment: updatedEquipment,
+        energySystem: updatedEnergy,
         player: {
           ...state.player,
           coins: state.player.coins + netCoins,
@@ -276,15 +442,22 @@ export const useGameStore = create<GameState>((set, get) => ({
         c.id === activeCase.id ? { ...c, status: 'accident' as const } : c
       )
 
-      const updatedEquipment = damagedEquipId
-        ? state.equipment.map(e =>
+      const finalEquipment = damagedEquipId
+        ? updatedEquipment.map(e =>
             e.id === damagedEquipId ? { ...e, status: 'damaged' as const } : e
           )
-        : state.equipment
+        : updatedEquipment
+
+      if (blackoutForcedMisdiagnosis) {
+        updatedEnergy.misdiagnosedDuringBlackout += 1
+      }
 
       let message = ''
       const itemType = action === 'feed' ? '食物' : action === 'inject' ? '注射剂' : '药品'
-      if (errorType === 'action') {
+      if (blackoutForcedMisdiagnosis) {
+        message = `⚠️ 【断电误诊】供电不稳定导致诊疗失误！${activeCase.petName} 未得到正确治疗。（扣除${itemType}费 ${medicineCost} ⬡，罚款 ${penalty} ⬡）`
+        errorType = 'action'
+      } else if (errorType === 'action') {
         message = `误诊！${activeCase.petName} 患的是「${disease.name}」，应该${getActionLabel(disease.correctAction)}而不是${getActionLabel(action)}！`
         if (medicineCost > 0) {
           message += `（扣除${itemType}费 ${medicineCost} ⬡）`
@@ -312,7 +485,8 @@ export const useGameStore = create<GameState>((set, get) => ({
 
       set({
         cases: updatedCases,
-        equipment: updatedEquipment,
+        equipment: finalEquipment,
+        energySystem: updatedEnergy,
         player: {
           ...state.player,
           coins: Math.max(0, state.player.coins - totalDeduction),
@@ -395,12 +569,92 @@ export const useGameStore = create<GameState>((set, get) => ({
     })
   },
 
+  toggleBlackout: () => {
+    const state = get()
+    const isCurrentlyOffline = state.energySystem.gridStatus === 'offline'
+    if (isCurrentlyOffline) {
+      get().restorePower()
+      return
+    }
+    set(state => ({
+      energySystem: {
+        ...state.energySystem,
+        gridStatus: 'offline',
+        blackoutCount: state.energySystem.blackoutCount + 1,
+      },
+      equipment: state.equipment.map(e => ({ ...e, currentLoad: 0 })),
+    }))
+  },
+
+  restorePower: () => {
+    set(state => ({
+      energySystem: {
+        ...state.energySystem,
+        gridStatus: 'online',
+      },
+    }))
+  },
+
+  setPowerSource: (source: PowerSource) => {
+    set(state => ({
+      energySystem: {
+        ...state.energySystem,
+        powerSource: source,
+      },
+    }))
+  },
+
+  adjustPowerPriority: (equipmentId: string, direction: 'up' | 'down') => {
+    set(state => {
+      const priority = [...state.energySystem.powerPriority]
+      const index = priority.indexOf(equipmentId)
+      if (index === -1) return state
+
+      const newIndex = direction === 'up' ? index - 1 : index + 1
+      if (newIndex < 0 || newIndex >= priority.length) return state
+
+      const temp = priority[index]
+      priority[index] = priority[newIndex]
+      priority[newIndex] = temp
+
+      return {
+        energySystem: {
+          ...state.energySystem,
+          powerPriority: priority,
+        },
+      }
+    })
+  },
+
+  chargeBatteries: () => {
+    set(state => {
+      if (state.energySystem.gridStatus !== 'online') return state
+      if (state.player.coins < 20) return state
+
+      return {
+        equipment: state.equipment.map(e => ({
+          ...e,
+          batteryLevel: e.batteryCapacity,
+        })),
+        energySystem: {
+          ...state.energySystem,
+          currentBackupBattery: state.energySystem.totalBackupBattery,
+        },
+        player: {
+          ...state.player,
+          coins: state.player.coins - 20,
+        },
+      }
+    })
+  },
+
   resetGame: () => {
     set({
       cases: generateInitialCases(5),
       activeCaseId: null,
       player: { ...initialPlayer },
       equipment: initialEquipment.map(e => ({ ...e })),
+      energySystem: { ...initialEnergySystem },
       gamePhase: 'idle',
       accidentType: null,
       diagnosisResult: null,

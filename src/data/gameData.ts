@@ -36,6 +36,26 @@ export interface Equipment {
   status: 'normal' | 'damaged' | 'repairing'
   repairCost: number
   requiredAction: ActionType
+  powerConsumption: number
+  overloadThreshold: number
+  batteryCapacity: number
+  batteryLevel: number
+  currentLoad: number
+}
+
+export type PowerSource = 'grid' | 'battery' | 'hybrid'
+export type GridStatus = 'online' | 'unstable' | 'offline'
+
+export interface EnergySystem {
+  gridStatus: GridStatus
+  powerSource: PowerSource
+  totalGridCapacity: number
+  currentGridLoad: number
+  totalBackupBattery: number
+  currentBackupBattery: number
+  powerPriority: string[]
+  blackoutCount: number
+  misdiagnosedDuringBlackout: number
 }
 
 export interface PetCase {
@@ -113,12 +133,28 @@ export const symptoms: Symptom[] = [
 ]
 
 export const initialEquipment: Equipment[] = [
-  { id: 'scanner', name: '扫描仪', status: 'normal', repairCost: 50, requiredAction: 'examine' },
-  { id: 'injector', name: '注射器', status: 'normal', repairCost: 60, requiredAction: 'inject' },
-  { id: 'dispenser', name: '药品发放器', status: 'normal', repairCost: 45, requiredAction: 'medicate' },
-  { id: 'feeder', name: '喂食器', status: 'normal', repairCost: 30, requiredAction: 'feed' },
-  { id: 'isolation_unit', name: '隔离舱', status: 'normal', repairCost: 80, requiredAction: 'isolate' },
+  { id: 'scanner', name: '扫描仪', status: 'normal', repairCost: 50, requiredAction: 'examine', powerConsumption: 15, overloadThreshold: 40, batteryCapacity: 80, batteryLevel: 80, currentLoad: 0 },
+  { id: 'injector', name: '注射器', status: 'normal', repairCost: 60, requiredAction: 'inject', powerConsumption: 25, overloadThreshold: 60, batteryCapacity: 60, batteryLevel: 60, currentLoad: 0 },
+  { id: 'dispenser', name: '药品发放器', status: 'normal', repairCost: 45, requiredAction: 'medicate', powerConsumption: 18, overloadThreshold: 50, batteryCapacity: 70, batteryLevel: 70, currentLoad: 0 },
+  { id: 'feeder', name: '喂食器', status: 'normal', repairCost: 30, requiredAction: 'feed', powerConsumption: 12, overloadThreshold: 35, batteryCapacity: 50, batteryLevel: 50, currentLoad: 0 },
+  { id: 'isolation_unit', name: '隔离舱', status: 'normal', repairCost: 80, requiredAction: 'isolate', powerConsumption: 35, overloadThreshold: 80, batteryCapacity: 100, batteryLevel: 100, currentLoad: 0 },
 ]
+
+export const initialEnergySystem: EnergySystem = {
+  gridStatus: 'online',
+  powerSource: 'hybrid',
+  totalGridCapacity: 100,
+  currentGridLoad: 0,
+  totalBackupBattery: 200,
+  currentBackupBattery: 200,
+  powerPriority: ['isolation_unit', 'scanner', 'injector', 'dispenser', 'feeder'],
+  blackoutCount: 0,
+  misdiagnosedDuringBlackout: 0,
+}
+
+export function getEquipment(id: string): Equipment | undefined {
+  return initialEquipment.find(e => e.id === id)
+}
 
 const diseaseSymptomMap: Record<string, string[]> = {
   split_pox: ['spotted_skin'],
